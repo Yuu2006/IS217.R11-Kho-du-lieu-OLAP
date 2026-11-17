@@ -1,0 +1,35 @@
+﻿OUTCOME_ID,ORDER_STATUS,ORDER_READY_MARKED,CANCELLATION_REJECTION_REASON,CUSTOMER_COMPLAINT_TAG
+1,Delivered,Correctly,Not recorded,Item(s) missing or not delivered
+2,Delivered,Correctly,Not recorded,Non-refunded complaint
+3,Delivered,Correctly,Not recorded,Not recorded
+4,Delivered,Correctly,Not recorded,Poor packaging or spillage
+5,Delivered,Correctly,Not recorded,Poor taste or quality
+6,Delivered,Correctly,Not recorded,Wrong item(s) delivered
+7,Delivered,Incorrectly,Not recorded,Item(s) missing or not delivered
+8,Delivered,Incorrectly,Not recorded,Non-refunded complaint
+9,Delivered,Incorrectly,Not recorded,Not recorded
+10,Delivered,Incorrectly,Not recorded,Poor packaging or spillage
+11,Delivered,Incorrectly,Not recorded,Poor taste or quality
+12,Delivered,Incorrectly,Not recorded,Wrong item(s) delivered
+13,Delivered,Missed,Not recorded,Item(s) missing or not delivered
+14,Delivered,Missed,Not recorded,Non-refunded complaint
+15,Delivered,Missed,Not recorded,Not recorded
+16,Delivered,Missed,Not recorded,Poor packaging or spillage
+17,Delivered,Missed,Not recorded,Poor taste or quality
+18,Delivered,Missed,Not recorded,Wrong item(s) delivered
+19,Picked up,Correctly,Not recorded,Not recorded
+20,Picked up,Missed,Not recorded,Not recorded
+21,Rejected,Correctly,Cancelled by Customer,Not recorded
+22,Rejected,Correctly,Cancelled by Zomato,Not recorded
+23,Rejected,Incorrectly,Cancelled by Customer,Not recorded
+24,Rejected,Incorrectly,Cancelled by Zomato,Not recorded
+25,Rejected,Missed,Cancelled by Customer,Not recorded
+26,Rejected,Missed,Cancelled by Zomato,Not recorded
+27,Rejected,Missed,Items out of stock,Not recorded
+28,Rejected,Missed,Kitchen is full,Not recorded
+29,Rejected,Missed,Merchant device issue,Not recorded
+30,Return cancelled,Correctly,Cancelled by Zomato,Not recorded
+31,Returned,Correctly,Cancelled by Customer,Not recorded
+32,Returned,Correctly,Cancelled by Zomato,Not recorded
+33,Returned,Incorrectly,Cancelled by Zomato,Not recorded
+34,Timed out,Missed,Not recorded,Not recorded

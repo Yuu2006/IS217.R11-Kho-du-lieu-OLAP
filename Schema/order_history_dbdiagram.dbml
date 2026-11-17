@@ -1,0 +1,105 @@
+// Paste this file into the DBML editor at https://dbdiagram.io/d
+// FACT_ORDER: one row per order. BRIDGE_ORDER_ITEM: one row per distinct item in an order.
+
+Table dbo.DIM_DATE {
+  FULL_DATE date [pk, not null]
+  DAY_OF_MONTH tinyint [not null]
+  MONTH_NUMBER tinyint [not null]
+  QUARTER_NUMBER tinyint [not null]
+  YEAR_NUMBER smallint [not null]
+  WEEKDAY_NUMBER tinyint [not null]
+  IS_WEEKEND bit [not null]
+}
+
+Table dbo.DIM_TIME {
+  HOUR_NUMBER tinyint [pk, not null]
+  DAY_PART nvarchar(20) [not null]
+}
+
+Table dbo.DIM_RESTAURANT {
+  RESTAURANT_ID int [pk, not null]
+  SOURCE_RESTAURANT_ID int [not null]
+  SUBZONE nvarchar(100) [not null]
+  RESTAURANT_NAME nvarchar(100) [not null]
+  CITY nvarchar(100) [not null]
+
+  indexes {
+    (SOURCE_RESTAURANT_ID, SUBZONE) [unique]
+  }
+}
+
+Table dbo.DIM_CUSTOMER {
+  SOURCE_CUSTOMER_ID nvarchar(64) [pk, not null]
+}
+
+Table dbo.DIM_ITEM {
+  ITEMS_IN_ORDER nvarchar(200) [pk, not null]
+}
+
+Table dbo.DIM_OUTCOME {
+  OUTCOME_ID int [pk, not null]
+  ORDER_STATUS nvarchar(40) [not null]
+  ORDER_READY_MARKED nvarchar(40) [not null]
+  CANCELLATION_REJECTION_REASON nvarchar(100) [not null, note: 'Not recorded when blank in source']
+  CUSTOMER_COMPLAINT_TAG nvarchar(100) [not null, note: 'Not recorded when blank in source']
+
+  indexes {
+    (ORDER_STATUS, ORDER_READY_MARKED, CANCELLATION_REJECTION_REASON, CUSTOMER_COMPLAINT_TAG) [unique]
+  }
+}
+
+Table dbo.DIM_PROMOTION {
+  DISCOUNT_CONSTRUCT nvarchar(100) [pk, not null, note: 'None when no promotion']
+  PROMOTION_TYPE nvarchar(30) [not null]
+}
+
+Table dbo.DIM_DISTANCE {
+  DISTANCE nvarchar(20) [pk, not null]
+  DISTANCE_INT tinyint [not null]
+}
+
+Table dbo.FACT_ORDER {
+  SOURCE_ORDER_ID bigint [pk, not null]
+  FULL_DATE date [not null]
+  HOUR_NUMBER tinyint [not null]
+  RESTAURANT_ID int [not null]
+  SOURCE_CUSTOMER_ID nvarchar(64) [not null]
+  OUTCOME_ID int [not null]
+  DISCOUNT_CONSTRUCT nvarchar(100) [not null]
+  DISTANCE nvarchar(20) [not null]
+  BILL_SUBTOTAL decimal(14,2) [not null]
+  PACKAGING_CHARGES decimal(14,2) [not null]
+  DISCOUNT_TOTAL decimal(14,2) [not null]
+  TOTAL decimal(14,2) [not null]
+  RATING_VALUE decimal(3,1)
+  KPT_MINUTES decimal(8,2)
+  RIDER_WAIT_MINUTES decimal(8,2)
+
+  indexes {
+    FULL_DATE
+    RESTAURANT_ID
+    SOURCE_CUSTOMER_ID
+    OUTCOME_ID
+  }
+}
+
+Table dbo.BRIDGE_ORDER_ITEM {
+  SOURCE_ORDER_ID bigint [not null]
+  ITEMS_IN_ORDER nvarchar(200) [not null]
+  ITEM_QUANTITY int [not null]
+
+  indexes {
+    (SOURCE_ORDER_ID, ITEMS_IN_ORDER) [pk]
+    ITEMS_IN_ORDER
+  }
+}
+
+Ref: dbo.FACT_ORDER.FULL_DATE > dbo.DIM_DATE.FULL_DATE
+Ref: dbo.FACT_ORDER.HOUR_NUMBER > dbo.DIM_TIME.HOUR_NUMBER
+Ref: dbo.FACT_ORDER.RESTAURANT_ID > dbo.DIM_RESTAURANT.RESTAURANT_ID
+Ref: dbo.FACT_ORDER.SOURCE_CUSTOMER_ID > dbo.DIM_CUSTOMER.SOURCE_CUSTOMER_ID
+Ref: dbo.FACT_ORDER.OUTCOME_ID > dbo.DIM_OUTCOME.OUTCOME_ID
+Ref: dbo.FACT_ORDER.DISCOUNT_CONSTRUCT > dbo.DIM_PROMOTION.DISCOUNT_CONSTRUCT
+Ref: dbo.FACT_ORDER.DISTANCE > dbo.DIM_DISTANCE.DISTANCE
+Ref: dbo.BRIDGE_ORDER_ITEM.SOURCE_ORDER_ID > dbo.FACT_ORDER.SOURCE_ORDER_ID
+Ref: dbo.BRIDGE_ORDER_ITEM.ITEMS_IN_ORDER > dbo.DIM_ITEM.ITEMS_IN_ORDER

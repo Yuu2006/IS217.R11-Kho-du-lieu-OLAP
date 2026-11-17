@@ -1,0 +1,356 @@
+﻿// =====================================================================
+// 15 CÂU TRUY VẤN MDX - Food Delivery Order History Data Ware House
+// Cube : [Food Delivery Order History Data Ware House]
+// Chỉ dùng các hàm: SUBSET, ORDER, UNION, BOTTOMSUM, TOPSUM, EXCEPT, FILTER,
+//   NON EMPTY, GENERATE, BOTTOMCOUNT, INTERSECT, TOPPERCENT, CROSSJOIN, MAX,
+//   EXISTS, TOPCOUNT, DESCENDANTS + calculated member SL_MIN.
+// (không dùng IIF, SUM, COUNT, HEAD, TAIL... Chỉ dùng .MEMBERS/.CURRENTMEMBER/.PARENT/.NAME)
+//
+// ---------------------------------------------------------------------
+// BƯỚC CHUẨN BỊ TRONG PROJECT SSAS (đối chiếu file .dim/.cube đang lưu trên máy)
+//  0. ĐÃ LÀM (bỏ khóa tự đánh số): .dsv, 9 file .dim và .cube đã đổi sang khóa nguồn
+//     (DATE ID->FULL_DATE, TIME ID->HOUR_NUMBER, RESTAURANT ID->RESTAURANT_ID (giữ),
+//     CUSTOMER ID->SOURCE_CUSTOMER_ID, ITEM ID->ITEMS_IN_ORDER, OUTCOME ID->OUTCOME_ID (giữ),
+//     PROMOTION ID->DISCOUNT_CONSTRUCT, DISTANCE ID->DISTANCE, FACT ORDER ID->SOURCE_ORDER_ID).
+//     Tên attribute giữ nguyên nên các truy vấn bên dưới không đổi, trừ câu 12 và 13.
+//     Nếu đã mở project trong SSDT từ trước: đóng và mở lại, Deploy + Process Full.
+//  1. DIM OUTCOME : thêm attribute ORDER STATUS và CUSTOMER COMPLAINT TAG   (câu 6, 10)
+//     (OUTCOME ID khóa OUTCOME_ID, NameColumn = ORDER_STATUS; ô trống nguồn là 'Not recorded')
+//  2. DIM DATE    : thêm attribute IS WEEKEND                               (câu 14, 15)
+//  3. DIM DISTANCE: attribute khóa DISTANCE ID nay có khóa là nhãn DISTANCE và đã
+//     sắp theo DISTANCE INT; không cần thêm attribute DISTANCE nữa           (câu 12)
+//  4. DIM RESTAURANT: ĐÃ LÀM. RESTAURANT ID và RESTAURANT NAME khóa theo
+//     RESTAURANT_ID với NameColumn = RESTAURANT_NAME      (câu 4, 8, 9)
+//  5. Measure group BRIDGE ORDER ITEM chưa nối với DIM DATE. Thêm quan hệ
+//     Many-to-Many DIM DATE <-> BRIDGE ORDER ITEM, trung gian là measure
+//     group FACT ORDER (giống cách DIM ITEM đã làm)                         (câu 5, 15)
+//     Nếu không làm, SSAS bỏ qua lát cắt ngày và trả về số toàn kỳ, không báo lỗi.
+//  6. Thêm 2 measure Count: [KPT Count] = Count của KPT_MINUTES,
+//     [RIDER WAIT Count] = Count của RIDER_WAIT_MINUTES (dữ liệu có 295 và
+//     168 giá trị trống nên không chia cho [FACT ORDER Count])              (câu 11, 12)
+//  7. Measure [Sum Total] trước đây cộng SOURCE_ORDER_ID; đã sửa để cộng TOTAL
+//     (vẫn nên dùng [TOTAL]). Measure [SOURCE ORDER ID] cũng là tổng mã đơn: không có ý nghĩa, đừng dùng.
+//  Sau khi sửa: Deploy + Process Full.
+//  Nếu IS WEEKEND hiện 1/0 thay vì False/True, đổi &[True] thành &[1].
+//
+// CHI NHÁNH: trong cube, "nhà hàng" = một chi nhánh (RESTAURANT_ID, 24 chi nhánh
+// của 6 tên). SQL gom theo tên (6 nhà hàng) nên câu 4, 8, 9 sẽ khác SQL.
+// =====================================================================
+
+
+// ---------------------------------------------------------------------
+// CÂU 1. Số đơn và tổng giá trị đơn từng tháng thay đổi thế nào?
+// Hàm: NON EMPTY, DESCENDANTS
+// Kỳ vọng: 2024-09: 4241 đơn / 2,621,548.58 | 10: 4277 / 3,012,920.23
+//          11: 4491 / 3,016,541.46 | 12: 4301 / 3,090,128.91 | 2025-01: 4011 / 2,812,918.96
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[FACT ORDER Count], [Measures].[TOTAL]} ON COLUMNS,
+  NON EMPTY
+    DESCENDANTS([DIM DATE].[PhanCapNgay].[All], [DIM DATE].[PhanCapNgay].[MONTH NUMBER])
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 2. Từng khu vực có bao nhiêu đơn và tổng giá trị theo tháng?
+// Hàm: NON EMPTY, CROSSJOIN
+// Kỳ vọng: 31 dòng (khu vực x tháng có đơn); tổng đơn theo khu vực:
+//   GK2 7380, Sector 4 6530, DLF 3686, Sector 135 2442, Vasant Kunj 920,
+//   Shahdara 360, Chittaranjan Park 2, Sikandarpur 1
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[FACT ORDER Count], [Measures].[TOTAL]} ON COLUMNS,
+  NON EMPTY
+    CROSSJOIN(
+      [DIM RESTAURANT].[SUBZONE].[SUBZONE].MEMBERS,
+      [DIM DATE].[PhanCapNgay].[MONTH NUMBER].MEMBERS
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 3. 10 món ăn được đặt nhiều nhất là món gì?
+// Hàm: ORDER, SUBSET (cắt 10 phần tử đầu sau khi sắp giảm dần)
+// Kỳ vọng: Bageecha Pizza 3337, Chilli Cheese Garlic Bread 1936,
+//   Bone in Jamaican Grilled Chicken 1798, All About Chicken Pizza 1728,
+//   Makhani Paneer Pizza 1526, Margherita Pizza 1477, Cheesy Garlic Bread 1336,
+//   Jamaican Chicken Melt 1226, Herbed Potato 980, Tripple Cheese Pizza 959
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[ITEM QUANTITY]} ON COLUMNS,
+  NON EMPTY
+    SUBSET(
+      ORDER([DIM ITEM].[ITEM ID].[ITEM ID].MEMBERS, [Measures].[ITEM QUANTITY], BDESC),
+      0, 10
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 4. Nhà hàng có tổng giá trị đơn lớn nhất là nhà hàng nào?
+// ĐIỀU CHỈNH: tìm chi nhánh lớn nhất trong TỪNG khu vực (dòng lớn nhất toàn bảng
+//   chính là đáp án toàn hệ thống).
+// Hàm: GENERATE, FILTER, MAX, DESCENDANTS (+ NON EMPTY)
+// Kỳ vọng: toàn hệ thống lớn nhất = Aura Pizzas / Sector 4 = 3,480,386.04
+//   GK2: Aura 3,101,570.38 | DLF: Aura 1,969,834.74 | Sector 135: Aura 1,510,130.47
+//   Vasant Kunj: Aura 689,695.79 | Shahdara: Swaad 228,466.31
+//   Chittaranjan Park: The Chicken Junction 949.62 | Sikandarpur: The Chicken Junction 441.00
+// ---------------------------------------------------------------------
+WITH MEMBER [Measures].[MAX TOTAL KHU VUC] AS
+  MAX(
+    DESCENDANTS([DIM RESTAURANT].[Hierarchy].CURRENTMEMBER.PARENT,
+                [DIM RESTAURANT].[Hierarchy].[RESTAURANT NAME]),
+    [Measures].[TOTAL]
+  )
+SELECT
+  {[Measures].[TOTAL], [Measures].[MAX TOTAL KHU VUC]} ON COLUMNS,
+  NON EMPTY
+    GENERATE(
+      [DIM RESTAURANT].[Hierarchy].[SUBZONE].MEMBERS,
+      FILTER(
+        DESCENDANTS([DIM RESTAURANT].[Hierarchy].CURRENTMEMBER,
+                    [DIM RESTAURANT].[Hierarchy].[RESTAURANT NAME]),
+        [Measures].[TOTAL] = [Measures].[MAX TOTAL KHU VUC]
+      )
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 5. Mỗi tháng, một đơn trung bình đặt bao nhiêu phần?
+// Hàm: ORDER (xếp tháng theo số phần/đơn giảm dần), NON EMPTY
+// Cần bước chuẩn bị số 5.
+// Kỳ vọng: 2024-10 1.99 | 2024-12 1.98 | 2025-01 1.91 | 2024-11 1.91 | 2024-09 1.89
+// ---------------------------------------------------------------------
+WITH MEMBER [Measures].[Avg Items Per Order] AS
+  [Measures].[ITEM QUANTITY] / [Measures].[FACT ORDER Count],
+  FORMAT_STRING = "0.00"
+SELECT
+  {[Measures].[FACT ORDER Count], [Measures].[ITEM QUANTITY], [Measures].[Avg Items Per Order]} ON COLUMNS,
+  NON EMPTY
+    ORDER(
+      [DIM DATE].[PhanCapNgay].[MONTH NUMBER].MEMBERS,
+      [Measures].[Avg Items Per Order], BDESC
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 6. Số đơn đã giao và từ chối thay đổi theo tháng ra sao?
+// Hàm: UNION, CROSSJOIN, NON EMPTY
+// Kỳ vọng (Delivered / Rejected): 2024-09 4191/33 | 10: 4249/22 | 11: 4451/36
+//          12: 4264/34 | 2025-01: 3976/33
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[FACT ORDER Count]} ON COLUMNS,
+  NON EMPTY
+    CROSSJOIN(
+      [DIM DATE].[PhanCapNgay].[MONTH NUMBER].MEMBERS,
+      UNION(
+        {[DIM OUTCOME].[ORDER STATUS].&[Delivered]},
+        {[DIM OUTCOME].[ORDER STATUS].&[Rejected]}
+      )
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 7. Mỗi loại khuyến mãi có bao nhiêu đơn, tổng mức giảm chiếm bao nhiêu % tiền tạm tính?
+// ĐIỀU CHỈNH: chỉ giữ loại khuyến mãi thuộc nhóm tạo 80% tổng mức giảm VÀ
+//   thuộc nhóm chiếm 80% số đơn. [Discount Pct] có sẵn trong cube.
+// Hàm: INTERSECT, TOPPERCENT
+// Kỳ vọng: Percentage 6903 đơn, 17.64% | None 5498 đơn, 15.39% | Flat amount 4297 đơn, 15.36%
+//   (Buy 1 Get 1 có 4616 đơn nhưng DISCOUNT TOTAL = 0 nên bị loại)
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[FACT ORDER Count], [Measures].[DISCOUNT TOTAL],
+   [Measures].[BILL SUBTOTAL], [Measures].[Discount Pct]} ON COLUMNS,
+  INTERSECT(
+    TOPPERCENT([DIM PROMOTION].[PROMOTION TYPE].[PROMOTION TYPE].MEMBERS, 80, [Measures].[DISCOUNT TOTAL]),
+    TOPPERCENT([DIM PROMOTION].[PROMOTION TYPE].[PROMOTION TYPE].MEMBERS, 80, [Measures].[FACT ORDER Count])
+  )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 8. TOP 3 nhà hàng có tổng phí đóng gói cao nhất?
+// ĐIỀU CHỈNH: thêm nhóm cuối bảng. TOPSUM(400000) trả đúng 3 chi nhánh đầu;
+//   BOTTOMSUM(5000) trả nhóm chi nhánh nhỏ nhất cộng lại mới đạt 5000.
+// Hàm: UNION, TOPSUM, BOTTOMSUM
+// Kỳ vọng nhóm đầu: Aura/Sector 4 165,752.10 | Aura/GK2 147,688.10 | Aura/DLF 93,781.50
+//   nhóm cuối: 11 chi nhánh nhỏ nhất, cộng lại 5,296.6 (Tandoori/DLF 1,116.5 ... Chicken Junction/Sikandarpur 21.0)
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[PACKAGING CHARGES]} ON COLUMNS,
+  UNION(
+    TOPSUM([DIM RESTAURANT].[Hierarchy].[RESTAURANT NAME].MEMBERS, 400000, [Measures].[PACKAGING CHARGES]),
+    BOTTOMSUM([DIM RESTAURANT].[Hierarchy].[RESTAURANT NAME].MEMBERS, 5000, [Measures].[PACKAGING CHARGES])
+  )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 9. Điểm đánh giá trung bình của các đơn đã đánh giá theo nhà hàng?
+// ĐIỀU CHỈNH: lấy chi nhánh điểm thấp nhất trong từng khu vực (chỉ chi nhánh có đơn được đánh giá).
+// Hàm: NON EMPTY, GENERATE, BOTTOMCOUNT, FILTER
+// Kỳ vọng: DLF: Dilli Burger Adda 4.00 (6) | GK2: Dilli 4.12 (25) | Sector 135: Aura 4.20 (220)
+//   Sector 4: Dilli 4.29 (7) | Shahdara: Swaad 4.07 (29) | Vasant Kunj: Aura 4.35 (116)
+//   (Chittaranjan Park và Sikandarpur chưa có đánh giá nên không hiện)
+// ---------------------------------------------------------------------
+WITH MEMBER [Measures].[Avg Rating] AS
+  [Measures].[RATING VALUE] / [Measures].[Rated Order Count],
+  FORMAT_STRING = "0.00"
+SELECT
+  {[Measures].[Avg Rating], [Measures].[Rated Order Count]} ON COLUMNS,
+  NON EMPTY
+    GENERATE(
+      [DIM RESTAURANT].[Hierarchy].[SUBZONE].MEMBERS,
+      BOTTOMCOUNT(
+        FILTER(
+          DESCENDANTS([DIM RESTAURANT].[Hierarchy].CURRENTMEMBER,
+                      [DIM RESTAURANT].[Hierarchy].[RESTAURANT NAME]),
+          [Measures].[Rated Order Count] > 0
+        ),
+        1, [Measures].[Avg Rating]
+      )
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 10. Mỗi khu vực phát sinh những loại khiếu nại nào và bao nhiêu đơn?
+// Hàm: EXCEPT, FILTER, GENERATE, EXISTS, CROSSJOIN, NON EMPTY
+// (EXCEPT + FILTER bỏ nhóm "không ghi nhận": ô trống ở nguồn được nạp là 'Not recorded')
+// Kỳ vọng (số đơn): GK2: Non-refunded 45, Poor packaging 35, Poor taste 30, Wrong item 20, Missing 12
+//   Sector 4: 57 / 39 / 42 / 14 / 17 | DLF: 34 / 15 / 30 / 7 / 8 | Sector 135: 13 / 7 / 12 / 3 / 2
+//   Vasant Kunj: 6 / 8 / 3 / 0 / 1 | Shahdara: 2 / 0 / 3 / 3 / 0 | Chittaranjan Park: Wrong item 1
+// ---------------------------------------------------------------------
+WITH SET [Co khieu nai] AS
+  EXCEPT(
+    [DIM OUTCOME].[CUSTOMER COMPLAINT TAG].[CUSTOMER COMPLAINT TAG].MEMBERS,
+    FILTER(
+      [DIM OUTCOME].[CUSTOMER COMPLAINT TAG].[CUSTOMER COMPLAINT TAG].MEMBERS,
+      [DIM OUTCOME].[CUSTOMER COMPLAINT TAG].CURRENTMEMBER.NAME = "Not recorded"
+    )
+  )
+SELECT
+  {[Measures].[FACT ORDER Count]} ON COLUMNS,
+  NON EMPTY
+    GENERATE(
+      [DIM RESTAURANT].[SUBZONE].[SUBZONE].MEMBERS,
+      CROSSJOIN(
+        {[DIM RESTAURANT].[SUBZONE].CURRENTMEMBER},
+        EXISTS([Co khieu nai], {[DIM RESTAURANT].[SUBZONE].CURRENTMEMBER}, "FACT ORDER")
+      )
+    )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 11. Thời gian chuẩn bị món trung bình theo từng khu vực?
+// Hàm: ORDER, NON EMPTY (cần measure [KPT Count], bước chuẩn bị số 6)
+// Kỳ vọng (phút): DLF 18.88 | Shahdara 18.47 | GK2 17.97 | Vasant Kunj 17.43
+//   Sector 4 16.26 | Sikandarpur 15.87 | Sector 135 15.75 | Chittaranjan Park 14.32
+// ---------------------------------------------------------------------
+WITH MEMBER [Measures].[Avg KPT] AS
+  [Measures].[KPT MINUTES] / [Measures].[KPT Count],
+  FORMAT_STRING = "0.00"
+SELECT
+  {[Measures].[Avg KPT], [Measures].[KPT Count]} ON COLUMNS,
+  NON EMPTY
+    ORDER([DIM RESTAURANT].[SUBZONE].[SUBZONE].MEMBERS, [Measures].[Avg KPT], BDESC)
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 12. Thời gian tài xế chờ trung bình theo từng khoảng cách giao hàng?
+// Hàm: ORDER, NON EMPTY (cần [RIDER WAIT Count])
+// Kỳ vọng (phút, lớn nhất trước): 19km 7.22 (18 đơn) | 16km 6.36 | 17km 6.29 | 12km 6.01
+//   ... | 1km 4.30 (3326 đơn). 20km (3 đơn) và 21km (2 đơn) chỉ 0.77 và 1.05: mẫu quá nhỏ.
+// ---------------------------------------------------------------------
+WITH MEMBER [Measures].[Avg Rider Wait] AS
+  [Measures].[RIDER WAIT MINUTES] / [Measures].[RIDER WAIT Count],
+  FORMAT_STRING = "0.00"
+SELECT
+  {[Measures].[Avg Rider Wait], [Measures].[RIDER WAIT Count]} ON COLUMNS,
+  NON EMPTY
+    ORDER([DIM DISTANCE].[DISTANCE ID].[DISTANCE ID].MEMBERS, [Measures].[Avg Rider Wait], BDESC)
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 13. TOP 3 khách quay lại có tổng giá trị đơn cao nhất?
+// "Quay lại" = có ít nhất SL_MIN đơn. SL_MIN là calculated member = 2.
+// Hàm: FILTER, TOPCOUNT, calculated member SL_MIN
+// Kỳ vọng: mã khách c521ccf2... (61 đơn, 28,331.05) | 8b5c4d61... (23 đơn, 25,207.83) | 12b07b9c... (29 đơn, 22,416.31)
+//   (mã khách nguồn 64 ký tự; trước đây hiện số thứ tự 8900 / 6352 / 826)
+//   (3894 khách có từ 2 đơn trở lên)
+// ---------------------------------------------------------------------
+WITH MEMBER [Measures].[SL_MIN] AS 2
+SELECT
+  {[Measures].[FACT ORDER Count], [Measures].[TOTAL]} ON COLUMNS,
+  TOPCOUNT(
+    FILTER(
+      [DIM CUSTOMER].[CUSTOMER ID].[CUSTOMER ID].MEMBERS,
+      [Measures].[FACT ORDER Count] >= [Measures].[SL_MIN]
+    ),
+    3, [Measures].[TOTAL]
+  )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 14. Buổi nào trong ngày có số đơn nhiều nhất, phân biệt ngày thường / cuối tuần?
+// ĐIỀU CHỈNH: tính riêng từng tháng để thấy kết quả có ổn định không.
+// Hàm: GENERATE, TOPCOUNT, CROSSJOIN, DESCENDANTS
+// Kỳ vọng: cả 10 dòng đều là Evening. Ngày thường / cuối tuần:
+//   09: 1167/668 | 10: 1300/532 | 11: 1349/688 | 12: 1233/616 | 2025-01: 1178/507
+//   (toàn kỳ: Evening 6227 ngày thường, 3011 cuối tuần)
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[FACT ORDER Count]} ON COLUMNS,
+  GENERATE(
+    CROSSJOIN(
+      DESCENDANTS([DIM DATE].[PhanCapNgay].[All], [DIM DATE].[PhanCapNgay].[MONTH NUMBER]),
+      [DIM DATE].[IS WEEKEND].[IS WEEKEND].MEMBERS
+    ),
+    TOPCOUNT(
+      CROSSJOIN(
+        {([DIM DATE].[PhanCapNgay].CURRENTMEMBER, [DIM DATE].[IS WEEKEND].CURRENTMEMBER)},
+        [DIM TIME].[DAY PART].[DAY PART].MEMBERS
+      ),
+      1, [Measures].[FACT ORDER Count]
+    )
+  )
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House];
+
+
+// ---------------------------------------------------------------------
+// CÂU 15. 10 món được đặt nhiều nhất vào cuối tuần?
+// Hàm: TOPCOUNT, NON EMPTY (cần bước chuẩn bị số 2 và 5)
+// Kỳ vọng: Bageecha Pizza 1112, Chilli Cheese Garlic Bread 632, All About Chicken Pizza 605,
+//   Margherita Pizza 531, Makhani Paneer Pizza 519, Bone in Jamaican Grilled Chicken 510,
+//   Cheesy Garlic Bread 499, Jamaican Chicken Melt 438, Tripple Cheese Pizza 310,
+//   Murgh Amritsari Seekh Pizza 288
+// ---------------------------------------------------------------------
+SELECT
+  {[Measures].[ITEM QUANTITY]} ON COLUMNS,
+  NON EMPTY
+    TOPCOUNT([DIM ITEM].[ITEM ID].[ITEM ID].MEMBERS, 10, [Measures].[ITEM QUANTITY])
+  ON ROWS
+FROM [Food Delivery Order History Data Ware House]
+WHERE ([DIM DATE].[IS WEEKEND].&[True]);

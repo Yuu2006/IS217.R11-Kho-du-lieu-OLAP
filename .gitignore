@@ -1,0 +1,17 @@
+# OS / editor
+.vs/
+.vscode/
+Thumbs.db
+# Python
+__pycache__/
+*.pyc
+# Visual Studio BI build output / user files
+bin/
+obj/
+*.user
+# Power BI local cache
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+# Large media / raw data
+*.mp4
+*.mkv

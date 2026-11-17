@@ -1,0 +1,131 @@
+GIẢI THÍCH 15 CÂU TRUY VẤN SQL SERVER
+====================================
+
+Tệp SQL tương ứng: queries_sql_server.sql
+
+CÁCH ĐỌC CHUNG
+--------------
+- FACT_ORDER (viết tắt f): mỗi dòng là một đơn hàng. Vì vậy COUNT(*) trên
+  FACT_ORDER là số đơn; SUM(f.total) là tổng giá trị đơn ghi trong dữ liệu.
+- DIM_* là các bảng mô tả ngày, giờ, nhà hàng, khách, món, kết quả đơn và
+  khuyến mãi. JOIN ... ON ... dùng khóa để lấy thông tin mô tả. Khóa là mã/giá trị
+  nguồn (FULL_DATE, HOUR_NUMBER, SOURCE_CUSTOMER_ID, ...); riêng DIM_RESTAURANT và
+  DIM_OUTCOME dùng khóa số RESTAURANT_ID, OUTCOME_ID. FACT_ORDER có cùng tên cột khóa
+  với bảng chiều.
+- BRIDGE_ORDER_ITEM (viết tắt b): mỗi dòng là một cặp đơn - món và chứa
+  item_quantity (số phần món). Một đơn có thể có nhiều dòng trong bridge.
+  Vì vậy sau khi nối bridge, muốn đếm số đơn phải dùng
+  COUNT(DISTINCT f.SOURCE_ORDER_ID), hoặc COUNT(*) nếu đã nhóm theo từng món
+  vì mỗi cặp đơn - món chỉ xuất hiện một lần.
+- Không SUM(f.total) sau khi nối bridge: một đơn nhiều món sẽ bị lặp tiền.
+- TOP (N) lấy N dòng đầu; ORDER BY ... DESC xếp từ lớn đến nhỏ.
+- GROUP BY gom các dòng cùng nhóm; SUM tính tổng; AVG tính trung bình.
+- WHERE lọc trước khi nhóm; HAVING lọc nhóm sau khi đếm/tính tổng.
+- NULL là thiếu dữ liệu. COUNT(cột) và AVG(cột) bỏ qua NULL.
+- Giá trị tiền dùng đơn vị Rs như dataset gốc. total là giá trị ghi trong
+  nguồn, không tự động đồng nghĩa với doanh thu thực thu.
+
+01. Số đơn và tổng giá trị đơn hàng từng tháng thay đổi thế nào?
+    Bảng: FACT_ORDER + DIM_DATE.
+    Ghép mỗi đơn với ngày đặt, rồi GROUP BY năm và tháng. COUNT(*) đếm số
+    đơn; SUM(total) cộng giá trị đơn. Có năm trong nhóm để không gộp các
+    tháng cùng số của hai năm khác nhau.
+
+02. Từng khu vực có bao nhiêu đơn và tổng giá trị theo tháng?
+    Bảng: FACT_ORDER + DIM_DATE + DIM_RESTAURANT.
+    subzone là khu vực của nhà hàng. Nhóm theo năm, tháng và subzone.
+    COUNT(*) và SUM(total) cho số đơn, tổng giá trị của từng nhóm.
+
+03. 10 món ăn được đặt nhiều nhất là món gì?
+    Bảng: BRIDGE_ORDER_ITEM + DIM_ITEM.
+    SUM(item_quantity) là tổng số phần đã đặt của mỗi món. Sắp xếp giảm
+    dần rồi TOP (10). so_don_co_mon đếm số đơn có món đó; đây không phải
+    số phần. Một đơn đặt 3 phần cùng món thì đóng góp 3 phần và 1 đơn.
+
+04. Nhà hàng có tổng giá trị đơn lớn nhất là nhà hàng nào?
+    Bảng: FACT_ORDER + DIM_RESTAURANT.
+    Nhóm theo restaurant_name, cộng total, xếp giảm dần, lấy TOP (1).
+    Các địa điểm cùng tên được tính chung thành một nhà hàng/thương hiệu.
+    so_don cho biết số đơn tạo ra tổng giá trị đó.
+
+05. Mỗi tháng, một đơn trung bình đặt bao nhiêu phần?
+    Bảng: FACT_ORDER + BRIDGE_ORDER_ITEM + DIM_DATE.
+    Lấy tổng item_quantity trong tháng chia cho số đơn khác nhau trong
+    tháng. COUNT(DISTINCT SOURCE_ORDER_ID) rất quan trọng vì một đơn có thể
+    xuất hiện ở nhiều dòng bridge. NULLIF(..., 0) tránh chia cho 0.
+
+06. Số đơn đã giao và từ chối thay đổi theo tháng ra sao?
+    Bảng: FACT_ORDER + DIM_DATE + DIM_OUTCOME.
+    Chỉ giữ order_status = Delivered hoặc Rejected, rồi đếm theo
+    năm, tháng và trạng thái. Mỗi tháng có tối đa hai nhóm trạng thái này.
+
+07. Mỗi loại khuyến mãi có bao nhiêu đơn và tổng mức giảm chiếm bao nhiêu
+    phần trăm tiền tạm tính?
+    Bảng: FACT_ORDER + DIM_PROMOTION.
+    Nhóm theo promotion_type. Đếm đơn, cộng discount_total và bill_subtotal.
+    Tỷ lệ = 100 x tổng discount_total / tổng bill_subtotal.
+    discount_total là tổng 4 cột giảm giá trong nguồn. promotion_type
+    được phân loại từ văn bản Discount construct; nhóm None chỉ nói rằng
+    văn bản này trống, không khẳng định mọi khoản giảm tiền đều bằng 0.
+
+08. TOP 3 nhà hàng có tổng phí đóng gói cao nhất?
+    Bảng: FACT_ORDER + DIM_RESTAURANT.
+    Nhóm theo restaurant_name, cộng packaging_charges, xếp giảm dần,
+    lấy 3 nhà hàng đầu. Các địa điểm cùng tên được cộng chung.
+
+09. Điểm đánh giá trung bình của các đơn đã đánh giá theo nhà hàng?
+    Bảng: FACT_ORDER + DIM_RESTAURANT.
+    WHERE rating_value IS NOT NULL chỉ giữ đơn có điểm. Nhóm theo tên
+    nhà hàng, AVG(rating_value) tính điểm trung bình. COUNT(*) cho biết
+    điểm trung bình dựa trên bao nhiêu đơn; các địa điểm cùng tên tính chung.
+
+10. Mỗi khu vực phát sinh những loại khiếu nại nào và bao nhiêu đơn?
+    Bảng: FACT_ORDER + DIM_RESTAURANT + DIM_OUTCOME.
+    Bỏ customer_complaint_tag = 'Not recorded' (ô trống ở nguồn), rồi nhóm theo subzone và
+    customer_complaint_tag. COUNT(*) là số đơn có loại khiếu nại đó trong khu vực.
+    subzone là khu vực nhà hàng, không phải địa chỉ khách.
+
+11. Thời gian chuẩn bị món trung bình theo từng khu vực là bao nhiêu?
+    Bảng: FACT_ORDER + DIM_RESTAURANT.
+    Nối RESTAURANT_ID để lấy subzone (khu vực nhà hàng), rồi nhóm theo
+    subzone. AVG(kpt_minutes) tính trung bình số phút chuẩn bị món trong
+    từng khu vực. COUNT(kpt_minutes) là số đơn có ghi nhận thời gian và
+    thực sự được dùng để tính trung bình; giá trị trống không được tính.
+
+12. Thời gian tài xế chờ trung bình theo từng khoảng cách giao hàng là bao nhiêu?
+    Bảng: FACT_ORDER + DIM_DISTANCE.
+    Nối DISTANCE để lấy distance (nhãn khoảng cách giao hàng)
+    và nhóm theo từng nhãn. AVG(rider_wait_minutes) là số phút chờ trung
+    bình; COUNT(rider_wait_minutes) là số đơn có dữ liệu để tính. Kết quả
+    được xếp theo distance_int. Nhãn như <1km là một nhóm khoảng
+    cách, không phải số km đo chính xác.
+
+13. TOP 3 khách quay lại có tổng giá trị đơn cao nhất?
+    Bảng: FACT_ORDER + DIM_CUSTOMER.
+    Nhóm theo mã khách. HAVING COUNT(*) >= 2 chỉ giữ khách có ít nhất
+    hai đơn; cộng total, xếp giảm dần rồi lấy 3 khách đầu.
+    source_customer_ID là mã khách trong dataset, không phải tên người.
+
+14. Buổi nào trong ngày có số lượng đơn nhiều nhất, phân biệt giữa ngày thường và cuối tuần?
+    Bảng: FACT_ORDER + DIM_DATE + DIM_TIME.
+    is_weekend = 1 là cuối tuần, 0 là ngày thường. day_part là buổi
+    trong ngày. Bước 1 đếm đơn của từng cặp loại ngày - buổi. Bước 2
+    dùng DENSE_RANK để xếp hạng số đơn riêng cho ngày thường và cuối
+    tuần. Chỉ giữ hạng 1, tức buổi có nhiều đơn nhất ở mỗi loại ngày;
+    nếu hai buổi bằng nhau thì hiện cả hai. Bảng DIM_TIME dùng tên buổi
+    tiếng Anh: Night, Morning, Lunch, Afternoon, Evening.
+
+15. 10 món được đặt nhiều nhất vào cuối tuần?
+    Bảng: BRIDGE_ORDER_ITEM + FACT_ORDER + DIM_ITEM + DIM_DATE.
+    WHERE is_weekend = 1 chọn đơn đặt vào thứ Bảy/Chủ nhật. Cộng
+    item_quantity theo món, xếp giảm dần và lấy 10 món đầu.
+    Câu hỏi này tính mọi trạng thái đơn; không lọc riêng đơn đã giao.
+
+LƯU Ý KHI DÙNG
+-------------
+- Chạy schema_sql_server.sql và nạp các file DIM_*.csv, FACT_ORDER.csv,
+  BRIDGE_ORDER_ITEM.csv vào SQL Server trước khi chạy tệp truy vấn.
+- BRIDGE_ORDER_ITEM là bảng liên kết đơn - món; nó không phải FACT thứ hai.
+- Nếu muốn xem kết quả theo từng chi nhánh/địa điểm nhà hàng ở câu 04,
+  08 hoặc 09, cần nhóm thêm RESTAURANT_ID (hoặc SOURCE_RESTAURANT_ID và subzone) thay vì chỉ nhóm
+  restaurant_name.
